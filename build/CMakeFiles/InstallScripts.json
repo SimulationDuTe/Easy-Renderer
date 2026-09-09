@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"F:/CodingFolder/MySoftwareRenderer/build/cmake_install.cmake",
-		"F:/CodingFolder/MySoftwareRenderer/build/vendored/SDL/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

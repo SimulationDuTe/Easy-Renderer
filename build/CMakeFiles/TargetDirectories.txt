@@ -1,6 +1,0 @@
-F:/CodingFolder/MySoftwareRenderer/build/CMakeFiles/EasyRenderer.dir
-F:/CodingFolder/MySoftwareRenderer/build/CMakeFiles/ALL_BUILD.dir
-F:/CodingFolder/MySoftwareRenderer/build/CMakeFiles/ZERO_CHECK.dir
-F:/CodingFolder/MySoftwareRenderer/build/vendored/SDL/CMakeFiles/SDL3-static.dir
-F:/CodingFolder/MySoftwareRenderer/build/vendored/SDL/CMakeFiles/SDL3_test.dir
-F:/CodingFolder/MySoftwareRenderer/build/vendored/SDL/CMakeFiles/ALL_BUILD.dir

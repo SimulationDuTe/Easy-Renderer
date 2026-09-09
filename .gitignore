@@ -1,12 +1,29 @@
-"build/" 
-".vs/" 
-"*.pdb" 
-"*.ilk" 
-"*.exp" 
-"*.obj" 
-"*.exe" 
-"*.lib" 
-"CMakeCache.txt" 
-"CMakeFiles/" 
-"cmake_install.cmake" 
-"Makefile" 
+# Visual Studio
+.vs/
+*.pdb
+*.ilk
+*.exp
+*.obj
+*.exe
+*.lib
+*.idb
+*.ipdb
+*.iobj
+*.tlog
+*.user
+*.suo
+*.sdf
+
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CMakeUserPresets.json
+
+# 编译产物
+Debug/
+Release/
+x64/
+x86/

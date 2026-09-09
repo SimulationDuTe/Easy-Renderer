@@ -53,4 +53,4 @@ private:
 
 //两种常用实例
 using ColorBuffer = Buffer<uint32_t>;
-using zBuffer = Buffer<float>;
+using DepthBuffer = Buffer<float>;

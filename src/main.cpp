@@ -1,6 +1,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <algorithm>
 
 #include "Buffer.h"
 
@@ -8,37 +9,70 @@ struct Vec3
 {
 	float x, y, z;
 	Vec3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+
+	//标量乘
+	Vec3 operator*(float s) const { return Vec3(x * s, y * s, z * s); }
+	//加法
+	Vec3 operator+(const Vec3& o) const { return Vec3(x + o.x, y + o.y, z + o.z); }
+
+	friend inline Vec3 operator*(float s, const Vec3& v) {
+		return Vec3(v.x * s, v.y * s, v.z * s);
+	}
 };
 
 //画三角形
-void DrawTriangle(ColorBuffer& buffer, Vec3 v0, Vec3 v1, Vec3 v2, uint32_t color)
+void DrawTriangle(ColorBuffer& colorbuffer, DepthBuffer& zbuffer, const SDL_PixelFormatDetails* fmt, Vec3 v[3], Vec3 c[3])
 {
-	//计算三角形包围盒
-	int minX = std::max(0, (int)std::min({v0.x, v1.x, v2.x}));
-	int maxX = std::min(buffer.Width() - 1, (int)std::max({ v0.x, v1.x, v2.x }));
-	int minY = std::max(0, (int)std::min({ v0.y, v1.y, v2.y }));
-	int maxY = std::min(buffer.Height() - 1, (int)std::max({ v0.x,v1.x,v2.x }));
-
+	//计算三角形包围盒，只是三角形的最小外接矩形，方便遍历像素
+	int minX = std::max(0, (int)std::min({v[0].x, v[1].x, v[2].x}));
+	int maxX = std::min(colorbuffer.Width() - 1, (int)std::max({ v[0].x, v[1].x, v[2].x }));
+	int minY = std::max(0, (int)std::min({ v[0].y, v[1].y, v[2].y }));
+	int maxY = std::min(colorbuffer.Height() - 1, (int)std::max({ v[0].y, v[1].y, v[2].y }));
+	/*
+	包围盒是矩形的，超出了实际三角形的面积，故而有点并不在三角形中，所以需要通过边函数来判断，这是为了优化，
+	而判断产生的副产物——三角形面积比值（小三角形与整个三角形），则可以用来通过归一化计算重心坐标，因为重心坐标等于归一化的面积比值
+	*/
 
 	//遍历包围盒内每个像素
 	for (int y = minY; y <= maxY; y++)
 	{
 		for (int x = minX; x <= maxX; x++)
 		{
-			//计算重心坐标
-			int w0 = (v2.x - v1.x)*(y - v1.y) - (v2.y - v1.y)*(x - v2.x);
-			int w1 = (v0.x - v2.x)*(y - v2.y) - (v0.y - v2.y)*(x - v0.x);
-			int w2 = (v1.x - v0.x)*(y - v0.y) - (v1.y - v0.y)*(x - v1.x);
+			//计算边函数
+			//e012为未归一化的权重，e0,e1,e2为点到边的距离
+			//edge(A, B, P) = (B-A) × (P-A)
+			Vec3 p(x, y, 0);
+			int e0 = (v[2].x - v[1].x)*(p.y - v[1].y) - (v[2].y - v[1].y)*(p.x - v[1].x);
+			int e1 = (v[0].x - v[2].x)*(p.y - v[2].y) - (v[0].y - v[2].y)*(p.x - v[2].x);
+			int e2 = (v[1].x - v[0].x)*(p.y - v[0].y) - (v[1].y - v[0].y)*(p.x - v[0].x);
 
-			//如果重心坐标都大于等于0，则像素在三角形内
-			if(w0 >= 0 && w1 >= 0 && w2 >= 0)
-			{
-				buffer(x, y) = color;
-			}
-			else
-			{
-				//像素在三角形外，什么都不做
-			}
+			//判断该点是否在三角形内
+			bool inside = (e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0);
+			if (!inside) continue;//不同号即在外
+
+			//计算重心坐标(该点的权重)
+			float area = e0 + e1 + e2;//未归一化的面积
+			float w0 = e0 / area, w1 = e1 / area, w2 = e2 / area;//归一化的重心坐标
+
+			//深度测试
+			float z = w0 * v[0].z + w1 * v[1].z + w2 * v[2].z;
+			if (z >= zbuffer(x, y)) continue;
+			zbuffer(x, y) = z;
+
+			//计算颜色插值
+			Vec3 color = w0 * c[0] + w1 * c[1] + w2 * c[2];
+
+			// 钳制颜色到 [0, 255]（防止溢出）
+			color.x = std::max(0.0f, std::min(255.0f, color.x));
+			color.y = std::max(0.0f, std::min(255.0f, color.y));
+			color.z = std::max(0.0f, std::min(255.0f, color.z));
+
+			// 写入帧缓冲
+			colorbuffer(x, y) = SDL_MapRGBA(fmt, NULL,
+				(Uint8)color.x,
+				(Uint8)color.y,
+				(Uint8)color.z,
+				255);
 		}
 	}
 }
@@ -103,8 +137,11 @@ int main(int argc, char* argv[])
 			}
 		}
 
-		//先清空帧缓冲为背景色（例如黑色）
-		framebuffer.clear(0xFF000000);
+		//创建深度缓冲区
+	DepthBuffer zbuffer(W, H);
+
+		framebuffer.clear(0xFF000000);   // 颜色清黑
+		zbuffer.clear(1.0f);             // 深度清"最远"
 
 
 		//逐像素写渐变到FrameBuffer中
@@ -130,10 +167,15 @@ int main(int argc, char* argv[])
 		//	}
 		//}
 
-		//画三角形
-		DrawTriangle(framebuffer,
-			Vec3(100, 100, 0), Vec3(400, 120, 0), Vec3(250, 380, 0),
-			SDL_MapRGBA(fmt, NULL, 255, 200, 0, 255));
+		// 三角形1：RGB 渐变（较远，z=0.7）
+		Vec3 t1v[3] = { Vec3(150,100,0.7f), Vec3(500,150,0.7f), Vec3(320,400,0.7f) };
+		Vec3 t1c[3] = { Vec3(255,0,0), Vec3(0,255,0), Vec3(0,0,255) };
+		DrawTriangle(framebuffer, zbuffer, fmt, t1v, t1c);
+
+		// 三角形2：白色，与三角形1重叠，更近（z=0.3）
+		Vec3 t2v[3] = { Vec3(320,50,0.3f), Vec3(600,450,0.3f), Vec3(100,450,0.3f) };
+		Vec3 t2c[3] = { Vec3(255,255,255), Vec3(255,255,255), Vec3(255,255,255) };
+		DrawTriangle(framebuffer, zbuffer, fmt, t2v, t2c);
 
 		//锁定纹理，获取像素指针和pitch(行字节数)
 		Uint32* pixels; int pitch;

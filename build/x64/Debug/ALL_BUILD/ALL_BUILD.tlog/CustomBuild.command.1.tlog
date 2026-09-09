@@ -1,0 +1,10 @@
+^F:\CODINGFOLDER\MYSOFTWARERENDERER\CMAKELISTS.TXT
+setlocal
+F:\CMake\cmake-4.3.1-windows-x86_64\bin\cmake.exe -SF:/CodingFolder/MySoftwareRenderer -BF:/CodingFolder/MySoftwareRenderer/build --check-stamp-file F:/CodingFolder/MySoftwareRenderer/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

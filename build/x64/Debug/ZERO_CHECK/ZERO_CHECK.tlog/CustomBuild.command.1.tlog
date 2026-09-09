@@ -1,0 +1,10 @@
+^F:\CODINGFOLDER\MYSOFTWARERENDERER\BUILD\CMAKEFILES\42FE8C06F0DDD594244D8C53E6280A12\GENERATE.STAMP.RULE
+setlocal
+F:\CMake\cmake-4.3.1-windows-x86_64\bin\cmake.exe -SF:/CodingFolder/MySoftwareRenderer -BF:/CodingFolder/MySoftwareRenderer/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file F:/CodingFolder/MySoftwareRenderer/build/EasyRenderer.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

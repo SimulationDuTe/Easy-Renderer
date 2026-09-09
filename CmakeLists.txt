@@ -1,0 +1,42 @@
+#----基础声明
+cmake_minimum_required(VERSION 3.16)
+project(EasyRenderer)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+#----vendored SDL3
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+add_subdirectory(vendored/SDL EXCLUDE_FROM_ALL)
+
+#----收集源文件
+file(GLOB_RECURSE RENDERER_SOURCES CONFIGURE_DEPENDS
+	"src/*.cpp"
+	"src/*.h"
+	"include/*.h"
+)
+
+#----可执行文件
+add_executable(EasyRenderer ${RENDERER_SOURCES})
+
+#----链接静态SDL3
+target_link_libraries(EasyRenderer PRIVATE SDL3::SDL3)
+
+#---头文件
+target_include_directories(EasyRenderer PRIVATE
+	include
+	vendored/stb_image
+)
+
+#---单exe
+if(MINGW)
+    target_link_options(EasyRenderer PRIVATE -static-libgcc -static-libstdc++)
+endif()
+
+# 每次构建后，把 assets/ 整个拷到 exe 所在目录
+add_custom_command(TARGET EasyRenderer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/scenes
+        $<TARGET_FILE_DIR:EasyRenderer>/scenes
+)

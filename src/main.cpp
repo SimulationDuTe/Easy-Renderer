@@ -4,79 +4,9 @@
 #include <algorithm>
 
 #include "Buffer.h"
-
-struct Vec3
-{
-	float x, y, z;
-	Vec3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
-
-	//标量乘
-	Vec3 operator*(float s) const { return Vec3(x * s, y * s, z * s); }
-	//加法
-	Vec3 operator+(const Vec3& o) const { return Vec3(x + o.x, y + o.y, z + o.z); }
-
-	friend inline Vec3 operator*(float s, const Vec3& v) {
-		return Vec3(v.x * s, v.y * s, v.z * s);
-	}
-};
-
-//画三角形
-void DrawTriangle(ColorBuffer& colorbuffer, DepthBuffer& zbuffer, const SDL_PixelFormatDetails* fmt, Vec3 v[3], Vec3 c[3])
-{
-	//计算三角形包围盒，只是三角形的最小外接矩形，方便遍历像素
-	int minX = std::max(0, (int)std::min({v[0].x, v[1].x, v[2].x}));
-	int maxX = std::min(colorbuffer.Width() - 1, (int)std::max({ v[0].x, v[1].x, v[2].x }));
-	int minY = std::max(0, (int)std::min({ v[0].y, v[1].y, v[2].y }));
-	int maxY = std::min(colorbuffer.Height() - 1, (int)std::max({ v[0].y, v[1].y, v[2].y }));
-	/*
-	包围盒是矩形的，超出了实际三角形的面积，故而有点并不在三角形中，所以需要通过边函数来判断，这是为了优化，
-	而判断产生的副产物——三角形面积比值（小三角形与整个三角形），则可以用来通过归一化计算重心坐标，因为重心坐标等于归一化的面积比值
-	*/
-
-	//遍历包围盒内每个像素
-	for (int y = minY; y <= maxY; y++)
-	{
-		for (int x = minX; x <= maxX; x++)
-		{
-			//计算边函数
-			//e012为未归一化的权重，e0,e1,e2为点到边的距离
-			//edge(A, B, P) = (B-A) × (P-A)
-			Vec3 p(x, y, 0);
-			int e0 = (v[2].x - v[1].x)*(p.y - v[1].y) - (v[2].y - v[1].y)*(p.x - v[1].x);
-			int e1 = (v[0].x - v[2].x)*(p.y - v[2].y) - (v[0].y - v[2].y)*(p.x - v[2].x);
-			int e2 = (v[1].x - v[0].x)*(p.y - v[0].y) - (v[1].y - v[0].y)*(p.x - v[0].x);
-
-			//判断该点是否在三角形内
-			bool inside = (e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0);
-			if (!inside) continue;//不同号即在外
-
-			//计算重心坐标(该点的权重)
-			float area = e0 + e1 + e2;//未归一化的面积
-			float w0 = e0 / area, w1 = e1 / area, w2 = e2 / area;//归一化的重心坐标
-
-			//深度测试
-			float z = w0 * v[0].z + w1 * v[1].z + w2 * v[2].z;
-			if (z >= zbuffer(x, y)) continue;
-			zbuffer(x, y) = z;
-
-			//计算颜色插值
-			Vec3 color = w0 * c[0] + w1 * c[1] + w2 * c[2];
-
-			// 钳制颜色到 [0, 255]（防止溢出）
-			color.x = std::max(0.0f, std::min(255.0f, color.x));
-			color.y = std::max(0.0f, std::min(255.0f, color.y));
-			color.z = std::max(0.0f, std::min(255.0f, color.z));
-
-			// 写入帧缓冲
-			colorbuffer(x, y) = SDL_MapRGBA(fmt, NULL,
-				(Uint8)color.x,
-				(Uint8)color.y,
-				(Uint8)color.z,
-				255);
-		}
-	}
-}
-
+#include "Vec3.h"
+#include "Rasterizer.h"
+#include "Matrix4.h"
 
 int main(int argc, char* argv[])
 {
@@ -115,10 +45,29 @@ int main(int argc, char* argv[])
 	//用 Buffer 取代裸数组
 	ColorBuffer framebuffer(W,H);
 
+	//创建深度缓冲区
+	DepthBuffer zbuffer(W, H);
 
-	// 在进入主循环前，先定义方块的位置和大小
-	/*const int RECT_X = 50, RECT_Y = 50;
-	const int RECT_W = 100, RECT_H = 100;*/
+	//创建立方体顶点和面索引数据
+	Vec3 cubeVerts[8] = {
+	{-0.5,-0.5,-0.5}, { 0.5,-0.5,-0.5}, { 0.5, 0.5,-0.5}, {-0.5, 0.5,-0.5},  // 后 4 点
+	{-0.5,-0.5, 0.5}, { 0.5,-0.5, 0.5}, { 0.5, 0.5, 0.5}, {-0.5, 0.5, 0.5}   // 前 4 点
+	};
+	int cubeFaces[12][3] = {   // 6 个面，每个面 2 个三角形
+		{0,1,2},{0,2,3},  // 面0
+		{4,6,5},{4,7,6},  // 面1
+		{4,0,3},{4,3,7},  // 面2
+		{1,5,6},{1,6,2},  // 面3
+		{3,2,6},{3,6,7},  // 面4
+		{4,5,1},{4,1,0},  // 面5
+	};
+
+	//创建顶点颜色数据
+	Vec3 faceColors[6] = {
+	{255,0,0},{0,255,0},{0,0,255},{255,255,0},{255,0,255},{0,255,255}
+	};
+
+	float angle = 0.0f; //旋转角度
 
 	//主循环
 	bool done = false;
@@ -137,45 +86,55 @@ int main(int argc, char* argv[])
 			}
 		}
 
-		//创建深度缓冲区
-	DepthBuffer zbuffer(W, H);
 
 		framebuffer.clear(0xFF000000);   // 颜色清黑
-		zbuffer.clear(1.0f);             // 深度清"最远"
+		zbuffer.clear(0.0f);             // 深度清"最远"
 
+		angle += 0.01f; //每帧旋转角度增量
 
-		//逐像素写渐变到FrameBuffer中
-		/*for (int y = 0; y < H; y++)
-		{
-			for (int x = 0; x < W; x++)
-			{
-				framebuffer(x, y) = SDL_MapRGBA(fmt, NULL,
-					(Uint8)(x * 255 / W),
-					(Uint8)(y * 255 / H),
-					128, 255);
+		/*
+		局部坐标 (cubeVerts)
+		↓ 模型矩阵 (旋转)
+		世界坐标
+		↓ 视图矩阵 (平移 -5)
+		相机坐标
+		↓ 投影矩阵 (透视)
+		裁剪坐标 (x, y, z, w)   ← w = -z_camera
+		↓ 透视除法 (x/w, y/w, z/w)
+		NDC 坐标 (范围 [-1, 1])
+		↓ 视口变换
+		屏幕坐标 (x ∈ [0, W], y ∈ [0, H], z ∈ [0, 1])
+		↓ DrawTriangle
+		帧缓冲像素
+		*/
+
+		// 模型矩阵：绕 Y 和 X 转
+		Matrix4 model = Matrix4::RotationY(angle) * Matrix4::RotationX(angle * 0.5f);
+
+		//视图矩阵.把立方体往后移到 z=-5（相机在原点看 -z）
+		Matrix4 view = Matrix4::Translation(0, 0, -5);
+
+		//投影矩阵.透视投影
+		Matrix4 projection = Matrix4::perspective(60.0f, (float)W / H, 0.1f, 100.0f);
+		
+		//Mvp矩阵（顺序从后到前）
+		Matrix4 mvp = projection * view * model;
+
+		for (int f = 0; f < 12; f++) {
+			Vec3 tri[3], col[3];
+			for (int i = 0; i < 3; i++) {
+				//获取顶点索引
+				int idx = cubeFaces[f][i];
+				Vec3 v = mvp * cubeVerts[idx];     // ① 变换到裁剪空间（w 有意义了）
+				v.PerspectiveDivision();             // ② 透视除法 → NDC
+				v.x = (v.x + 1) * 0.5f * W;        // ③ 视口变换
+				v.y = (1 - v.y) * 0.5f * H;        //    ★ y 要翻转（NDC 上=正，屏幕下=正）
+				v.z = (v.z + 1) * 0.5f;            //    z 从 [-1,1] 映射到 [0,1]
+				tri[i] = v;
+				col[i] = faceColors[f / 2];        // 每面一种颜色
 			}
-		}*/
-		//for (int y = RECT_Y; y < RECT_Y + RECT_H; y++) {
-		//	for (int x = RECT_X; x < RECT_X + RECT_W; x++) {
-		//		// 确保不越界
-		//		if (x >= 0 && x < W && y >= 0 && y < H) {
-		//			framebuffer(x, y) = SDL_MapRGBA(fmt, NULL,
-		//				(Uint8)(x * 255 / W),
-		//				(Uint8)(y * 255 / H),
-		//				64, 255);
-		//		}
-		//	}
-		//}
-
-		// 三角形1：RGB 渐变（较远，z=0.7）
-		Vec3 t1v[3] = { Vec3(150,100,0.7f), Vec3(500,150,0.7f), Vec3(320,400,0.7f) };
-		Vec3 t1c[3] = { Vec3(255,0,0), Vec3(0,255,0), Vec3(0,0,255) };
-		DrawTriangle(framebuffer, zbuffer, fmt, t1v, t1c);
-
-		// 三角形2：白色，与三角形1重叠，更近（z=0.3）
-		Vec3 t2v[3] = { Vec3(320,50,0.3f), Vec3(600,450,0.3f), Vec3(100,450,0.3f) };
-		Vec3 t2c[3] = { Vec3(255,255,255), Vec3(255,255,255), Vec3(255,255,255) };
-		DrawTriangle(framebuffer, zbuffer, fmt, t2v, t2c);
+			Rasterizer::DrawTriangle(framebuffer, zbuffer, fmt, tri, col);
+		}
 
 		//锁定纹理，获取像素指针和pitch(行字节数)
 		Uint32* pixels; int pitch;

@@ -7,7 +7,7 @@
 #include "Vec3.h"
 #include "Rasterizer.h"
 #include "Matrix4.h"
-
+#include "Camera.h"
 
 struct Face { int v[3]; };
 std::vector<Vec3>  sphereVerts, sphereNormals;
@@ -82,6 +82,8 @@ int main(int argc, char* argv[])
 			sphereFaces.push_back({ b, b + 1, a + 1 });
 		}
 
+	//创建相机
+	Camera camera;
 
 	//高光颜色
 	Vec3 white = Vec3(255, 255, 255);
@@ -99,9 +101,9 @@ int main(int argc, char* argv[])
 	float angle = 0.0f;
 
 	
-
-	//视图矩阵.把立方体往后移到 z=-5（相机在原点看 -z）
-	Matrix4 view = Matrix4::Translation(0, 0, -5);
+	Matrix4 view = camera.GetViewMatrix();
+	
+	
 
 	//投影矩阵.透视投影
 	Matrix4 projection = Matrix4::perspective(60.0f, (float)W / H, 0.1f, 100.0f);
@@ -125,6 +127,9 @@ int main(int argc, char* argv[])
 
 	//主循环
 	bool done = false;
+
+	bool dragging = false;
+
 	while (!done)
 	{
 		SDL_Event event;
@@ -135,11 +140,38 @@ int main(int argc, char* argv[])
 				case SDL_EVENT_QUIT:
 					done = true;
 					break;
+				case SDL_EVENT_MOUSE_BUTTON_DOWN:
+					if (event.button.button == SDL_BUTTON_RIGHT) dragging = true;
+					break;
+				case SDL_EVENT_MOUSE_BUTTON_UP:
+					if (event.button.button == SDL_BUTTON_RIGHT) dragging = false;
+					break;
+				case SDL_EVENT_MOUSE_MOTION:
+					if (dragging)
+					{
+						camera.yaw += event.motion.xrel * 0.005f;
+						camera.pitch += event.motion.yrel * 0.005f;
+						if (camera.pitch > 1.5f) camera.pitch = 1.5f;
+						if (camera.pitch < -1.5f) camera.pitch = -1.5f;
+					}
+					break;
+				case SDL_EVENT_MOUSE_WHEEL:
+					//乘性缩放，远近距离都平滑
+					camera.distance *= (event.wheel.y > 0) ? 0.9f : 1.1f;
+					if (camera.distance < 0.5f) camera.distance = 0.5f;
+					if (camera.distance > 50.0f) camera.distance = 50.0f;
+					break;
 				default:
 					break;
 			}
 		}
 
+		//每帧更新
+		view = camera.GetViewMatrix();
+		shaderLeft.cameraPos = camera.GetPosition();
+		shaderLeft.viewProj = projection * view;
+		shaderRight.cameraPos = camera.GetPosition();
+		shaderRight.viewProj = projection * view;
 
 		framebuffer.clear(0xFF000000);   // 颜色清黑
 		//framebuffer.clear(0xFFFFFFFF);   // 清成白色
@@ -167,7 +199,7 @@ int main(int argc, char* argv[])
 		//Matrix4 model = Matrix4::RotationY(angle) * Matrix4::RotationX(angle * 0.5f);
 
 
-
+		//平移 旋转
 		Matrix4 mleft = Matrix4::Translation(-1.5f, 0, 0) * Matrix4::RotationY(angle);
 		Matrix4 mright = Matrix4::Translation(1.5f, 0, 0) * Matrix4::RotationY(angle);
 

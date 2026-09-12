@@ -136,6 +136,39 @@ struct Matrix4
 		return r;
 	}
 
+	// 构造一个视图矩阵，把世界坐标系变换到相机坐标系
+	//输入：
+	// eye：相机在世界空间的位置
+	// target：相机看向的点
+	// up：世界上方向（通常是(0, 1, 0)）
+	static Matrix4 LookAt(const Vec3& eye, const Vec3& target, const Vec3& _up)
+	{
+		// forward：相机看向的方向
+		Vec3 forward = (target - eye).normalized();
+		//side:相机右方向
+		////forward 和 up 是两个方向，它们张成一个平面（如果它们不平行）,这个平面包含视线方向，
+		// 也包含世界上方向forward × up 垂直于这个平面但“右方向”不是凭空来的，它由右手定则决定。
+		// 如果叉乘顺序反过来 up × forward，得到的就是左方向
+		Vec3 side = forward.cross(_up).normalized();
+		//up:相机上方向
+		//同理
+		Vec3 up = side.cross(forward).normalized();
+
+		Matrix4 r;
+		//旋转部分:
+		//把世界的 s 方向对齐到相机 +x，u 对齐到 +y，-f 对齐到 +z。
+		//为什么是 -f：相机看向 -z 方向，而 f 是相机看向的方向，所以相机空间的 +z 对应世界的 -f
+		//平移部分：
+		// 把相机位置 eye 移回到原点。
+		//对应的矩阵就是相机坐标系的基向量组成的矩阵
+		r.matrix[0][0] = side.x; r.matrix[0][1] = side.y; r.matrix[0][2] = side.z; r.matrix[0][3] = -side.dot(eye);
+		r.matrix[1][0] = up.x; r.matrix[1][1] = up.y; r.matrix[1][2] = up.z; r.matrix[1][3] = -up.dot(eye);
+		r.matrix[2][0] = -forward.x; r.matrix[2][1] = -forward.y; r.matrix[2][2] = -forward.z; r.matrix[2][3] = forward.dot(eye);
+		r.matrix[3][3] = 1.0f;
+
+		return r;
+	}
+
 	Vec3 TransFormDir(const Vec3& v) const
 	{
 		return Vec3(

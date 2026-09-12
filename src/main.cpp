@@ -8,6 +8,15 @@
 #include "Rasterizer.h"
 #include "Matrix4.h"
 
+
+struct Face { int v[3]; };
+std::vector<Vec3>  sphereVerts, sphereNormals;
+std::vector<Face>  sphereFaces;
+
+const int latBands = 32, lonBands = 32;   // 经纬度分段数
+
+
+
 int main(int argc, char* argv[])
 {
 	//初始化sdl窗口
@@ -48,28 +57,32 @@ int main(int argc, char* argv[])
 	//创建深度缓冲区
 	DepthBuffer zbuffer(W, H);
 
-	//创建立方体顶点和面索引数据
-	Vec3 cubeVerts[8] = {
-	{-0.5,-0.5,-0.5}, { 0.5,-0.5,-0.5}, { 0.5, 0.5,-0.5}, {-0.5, 0.5,-0.5},  // 后 4 点
-	{-0.5,-0.5, 0.5}, { 0.5,-0.5, 0.5}, { 0.5, 0.5, 0.5}, {-0.5, 0.5, 0.5}   // 前 4 点
-	};
+	//创建球体顶点和面
+	for (int lat = 0; lat <= latBands; lat++) 
+	{
+		float theta = lat * PI / latBands;              // 0..PI（北极→南极）
+		float st = sinf(theta), ct = cosf(theta);
+		for (int lon = 0; lon <= lonBands; lon++) 
+		{
+			float phi = lon * 2.0f * PI / lonBands;     // 0..2PI
+			float sp = sinf(phi), cp = cosf(phi);
+			Vec3 p(cp * st, ct, sp * st);                 // 单位球顶点
+			sphereVerts.push_back(p);
+			sphereNormals.push_back(p);                    // 单位球：法线 = 位置
+		}
+	}
 
-	//创建立方体面索引数组
-	int cubeFaces[12][3] = {   // 6 个面，每个面 2 个三角形
-		{0,1,2},{0,2,3},  // 面0
-		{4,6,5},{4,7,6},  // 面1
-		{4,0,3},{4,3,7},  // 面2
-		{1,5,6},{1,6,2},  // 面3
-		{3,2,6},{3,6,7},  // 面4
-		{4,5,1},{4,1,0},  // 面5
-	};
+	//创建索引面（每个四边形分成两个三角形）
+	for (int lat = 0; lat < latBands; lat++)
+		for (int lon = 0; lon < lonBands; lon++) 
+		{
+			int a = lat * (lonBands + 1) + lon;
+			int b = a + lonBands + 1;
+			sphereFaces.push_back({ a, b, a + 1 });
+			sphereFaces.push_back({ b, b + 1, a + 1 });
+		}
 
-	//方向光：固定方向。
-	Vec3 lightDir = Vec3(0.5f, 1.0f, 1.0f).normalized();//单位向量
-	//物体基础色
-	Vec3 baseColor = Vec3(255, 255, 255); 
-	//摄像机位置：固定在原点(0,0,0)，看向 -Z 方向
-	Vec3 cameraPos = Vec3(2, 2, 2);
+
 	//高光颜色
 	Vec3 white = Vec3(255, 255, 255);
 	//环境光强度
@@ -80,10 +93,35 @@ int main(int argc, char* argv[])
 	float diffuseStrength = 0.3f;
 	//光泽
 	float shininess = 16.0f;//通过powf，将高光收窄
-
+	
 
 	//旋转角度
-	float angle = 0.0f; 
+	float angle = 0.0f;
+
+	
+
+	//视图矩阵.把立方体往后移到 z=-5（相机在原点看 -z）
+	Matrix4 view = Matrix4::Translation(0, 0, -5);
+
+	//投影矩阵.透视投影
+	Matrix4 projection = Matrix4::perspective(60.0f, (float)W / H, 0.1f, 100.0f);
+
+	//顶点着色器
+	BlinnPhongShader shaderLeft;
+	PhongShader shaderRight;
+
+	shaderLeft.viewProj = projection * view;
+	shaderLeft.lightDir = Vec3(0.5f, 1.0f, 1.0f).normalized();
+	shaderLeft.cameraPos = Vec3(0, 0, 0);
+	shaderLeft.baseColor = Vec3(255, 0, 0);     // 红球
+
+	shaderRight.viewProj = projection * view;
+	shaderRight.lightDir = Vec3(0.5f, 1.0f, 1.0f).normalized();
+	shaderRight.cameraPos = Vec3(0, 0, 0);
+	shaderRight.baseColor = Vec3(0, 0, 255);     // 蓝球
+
+
+
 
 	//主循环
 	bool done = false;
@@ -104,6 +142,7 @@ int main(int argc, char* argv[])
 
 
 		framebuffer.clear(0xFF000000);   // 颜色清黑
+		//framebuffer.clear(0xFFFFFFFF);   // 清成白色
 		zbuffer.clear(0.0f);             // 深度清"最远"
 
 		angle += 0.01f; //每帧旋转角度增量
@@ -125,66 +164,42 @@ int main(int argc, char* argv[])
 		*/
 
 		// 模型矩阵：绕 Y 和 X 转
-		Matrix4 model = Matrix4::RotationY(angle) * Matrix4::RotationX(angle * 0.5f);
-
-		//视图矩阵.把立方体往后移到 z=-5（相机在原点看 -z）
-		Matrix4 view = Matrix4::Translation(0, 0, -5);
-
-		//投影矩阵.透视投影
-		Matrix4 projection = Matrix4::perspective(60.0f, (float)W / H, 0.1f, 100.0f);
-
-		Matrix4 projview = projection * view; //先视图再投影（model 单独用，为了拿世界坐标）
-
-		for (int f = 0; f < 12; f++) 
-		{
-			//从模型空间到世界空间的顶点变换，获取世界坐标
-			Vec3 w[3];
-			for (int i = 0; i < 3; i++) 
-				w[i] = model * cubeVerts[cubeFaces[f][i]];
-
-			//面法线
-			/*假设三角形ABC，要求法线，就得先有向量，B-A一个，C-A一个，然后这两个叉乘得到面法线,最后归一化为单位向量*/
-			Vec3 normal = (w[2] - w[0]).cross(w[1] - w[0]).normalized();
-
-			//面中心
-			//三角形三个顶点的平均值，代表这个面的中心位置
-			Vec3 faceCenter = (w[0] + w[1] + w[2]) * (1.0f / 3.0f);
+		//Matrix4 model = Matrix4::RotationY(angle) * Matrix4::RotationX(angle * 0.5f);
 
 
-			//计算从面中心到相机的方向向量，并归一化为单位向量
-			Vec3 viewDir = (cameraPos - faceCenter).normalized();
-			//计算半程向量，并归一化为单位向量
-			Vec3 halfDir = (viewDir + lightDir).normalized();//半程向量 = 指向光源方向 + 指向视线方向，归一化
-			
-			/*三项光照*/
-			//一：环境光：环境光强度 * 物体基础色
-			Vec3 ambient = ambientStrength * baseColor;
-			//二：漫反射：漫反射强度 * 物体基础色 * max(0, 法线·光源方向)
-			Vec3 diffuse = diffuseStrength * baseColor * std::max(0.0f, normal.dot(lightDir));
-			//三：镜面反射：镜面反射强度 * 高光颜色 * pow(max(0, 法线·半程向量), 光泽),钳制到0~1；
-			float spec = std::powf(std::max(0.0f,normal.dot(halfDir)), shininess);
-			Vec3 specular = specularStrength * white * spec;
 
-			//最终颜色 = 环境光 + 漫反射 + 镜面反射
-			Vec3 litColor = ambient + diffuse + specular;
-	
-			
-			//变换到裁剪空间 → 透视除法 → 视口
-			Vec3 tri[3];
-			for (int i = 0; i < 3; i++)
+		Matrix4 mleft = Matrix4::Translation(-1.5f, 0, 0) * Matrix4::RotationY(angle);
+		Matrix4 mright = Matrix4::Translation(1.5f, 0, 0) * Matrix4::RotationY(angle);
+
+
+
+		//lambda:渲染整个球体
+		auto DrawSphere = [&](Matrix4 model, Shader& shader)
 			{
-				Vec3 v = projview * w[i];
-				v.PerspectiveDivision(); //透视除法 变换到NDC坐标[-1,1]
-				//视口变换：NDC [-1, 1] → 屏幕坐标 [0, W] 和 [0, H]
-				v.x = (v.x + 1) * 0.5f * W;
-				v.y = (1 - v.y) * 0.5f * H;
-				v.z = (v.z + 1) * 0.5f;
-				tri[i] = v;
-			}
-			//三个顶点同一个颜色 = Flat（逐面）着色
-			Vec3 col[3] = { litColor, litColor, litColor };
-			Rasterizer::DrawTriangle(framebuffer, zbuffer, fmt, tri, col);
-		}
+				for (auto& f : sphereFaces)
+				{
+					Vec3 worldPos[3], normal[3], clip[3];
+					for (int i = 0; i < 3; ++i)
+					{
+						worldPos[i] = model * sphereVerts[f.v[i]];
+						normal[i] = model.TransFormDir(sphereNormals[f.v[i]]);//忽略平移分量，法线不受平移影响
+					}
+					for (int i = 0; i < 3; ++i) 
+						clip[i] = shader.Vertex(worldPos[i], normal[i], i);
+					for (int i = 0; i < 3; ++i)
+					{
+						clip[i].PerspectiveDivision();
+						clip[i].x = (clip[i].x + 1) * 0.5f * W;
+						clip[i].y = (1 - clip[i].y) * 0.5f * H;
+						clip[i].z = (clip[i].z + 1) * 0.5f;
+					}
+					Rasterizer::DrawTriangle(framebuffer, zbuffer, fmt, clip, shader);
+				}
+			};
+
+		DrawSphere(mleft, shaderLeft);
+		DrawSphere(mright, shaderRight);
+
 
 		//锁定纹理，获取像素指针和pitch(行字节数)
 		Uint32* pixels; int pitch;

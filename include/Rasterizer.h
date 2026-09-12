@@ -6,6 +6,7 @@
 
 #include "Buffer.h"
 #include "Vec3.h"
+#include "Shader.h"
 
 class Rasterizer
 {
@@ -18,7 +19,7 @@ public:
 		return (B.x - A.x) * (P.y - A.y) - (B.y - A.y) * (P.x - A.x);
 	}
 
-	static void DrawTriangle(ColorBuffer& fb, DepthBuffer& zb, const SDL_PixelFormatDetails* fmt, const Vec3 v[3], const Vec3 c[3])
+	static void DrawTriangle(ColorBuffer& fb, DepthBuffer& zb, const SDL_PixelFormatDetails* fmt, const Vec3 v[3],Shader& shader)
 	{
 		/*
 		*包围盒是矩形的，超出了实际三角形的面积，故而有点并不在三角形中，所以需要通过边函数来判断，这是为了优化，
@@ -59,8 +60,8 @@ public:
 				if (z <= zb(x, y)) continue;//z 越小越远 → 被挡住
 				zb(x, y) = z;
 
-				//计算颜色插值
-				Vec3 color = w0 * c[0] + w1 * c[1] + w2 * c[2];
+				//计算颜色插值(调用片段着色器)
+				Vec3 color = shader.Fragment(w1, w2);
 
 				// 钳制颜色到 [0, 255]（防止溢出）
 				color.x = std::max(0.0f, std::min(255.0f, color.x));

@@ -136,5 +136,19 @@ struct Matrix4
 		return r;
 	}
 
-	
+	Vec3 TransFormDir(const Vec3& v) const
+	{
+		return Vec3(
+			matrix[0][0] * v.x + matrix[0][1] * v.y + matrix[0][2] * v.z,
+			matrix[1][0] * v.x + matrix[1][1] * v.y + matrix[1][2] * v.z,
+			matrix[2][0] * v.x + matrix[2][1] * v.y + matrix[2][2] * v.z);
+	}
+
+	Vec3 TransformPoint(const Vec3& v) const
+	{
+		return Vec3(
+			matrix[0][0] * v.x + matrix[0][1] * v.y + matrix[0][2] * v.z + matrix[0][3],
+			matrix[1][0] * v.x + matrix[1][1] * v.y + matrix[1][2] * v.z + matrix[1][3],
+			matrix[2][0] * v.x + matrix[2][1] * v.y + matrix[2][2] * v.z + matrix[2][3]);
+	}
 };

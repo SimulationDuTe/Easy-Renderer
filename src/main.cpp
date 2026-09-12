@@ -3,17 +3,17 @@
 
 #include <algorithm>
 
+#include "texture.h"
 #include "Buffer.h"
 #include "Vec3.h"
 #include "Rasterizer.h"
 #include "Matrix4.h"
 #include "Camera.h"
+#include "mesh.h"
+#include "OBJLoader.h"
 
-struct Face { int v[3]; };
-std::vector<Vec3>  sphereVerts, sphereNormals;
-std::vector<Face>  sphereFaces;
 
-const int latBands = 32, lonBands = 32;   // 经纬度分段数
+
 
 
 
@@ -27,7 +27,7 @@ int main(int argc, char* argv[])
 	}
 	
 	//创建窗口
-	const int W = 641, H = 480;
+	const int W = 1280, H = 720;
 	SDL_Window* window = SDL_CreateWindow("EasyRenderer", W, H, 0);
 	if (!window)
 	{
@@ -57,50 +57,21 @@ int main(int argc, char* argv[])
 	//创建深度缓冲区
 	DepthBuffer zbuffer(W, H);
 
-	//创建球体顶点和面
-	for (int lat = 0; lat <= latBands; lat++) 
-	{
-		float theta = lat * PI / latBands;              // 0..PI（北极→南极）
-		float st = sinf(theta), ct = cosf(theta);
-		for (int lon = 0; lon <= lonBands; lon++) 
-		{
-			float phi = lon * 2.0f * PI / lonBands;     // 0..2PI
-			float sp = sinf(phi), cp = cosf(phi);
-			Vec3 p(cp * st, ct, sp * st);                 // 单位球顶点
-			sphereVerts.push_back(p);
-			sphereNormals.push_back(p);                    // 单位球：法线 = 位置
-		}
-	}
-
-	//创建索引面（每个四边形分成两个三角形）
-	for (int lat = 0; lat < latBands; lat++)
-		for (int lon = 0; lon < lonBands; lon++) 
-		{
-			int a = lat * (lonBands + 1) + lon;
-			int b = a + lonBands + 1;
-			sphereFaces.push_back({ a, b, a + 1 });
-			sphereFaces.push_back({ b, b + 1, a + 1 });
-		}
-
+	//创建着色器
+	TextureShader shader;
+	shader.lightDir = Vec3(0.0f, 0.0f, 1.0f).normalized();
+	
 	//创建相机
 	Camera camera;
 
-	//高光颜色
-	Vec3 white = Vec3(255, 255, 255);
-	//环境光强度
-	float ambientStrength = 0.1f;
-	//高光强度
-	float specularStrength = 0.8f;
-	//漫反射强度
-	float diffuseStrength = 0.3f;
-	//光泽
-	float shininess = 16.0f;//通过powf，将高光收窄
 	
 
 	//旋转角度
 	float angle = 0.0f;
 
 	
+
+
 	Matrix4 view = camera.GetViewMatrix();
 	
 	
@@ -108,22 +79,18 @@ int main(int argc, char* argv[])
 	//投影矩阵.透视投影
 	Matrix4 projection = Matrix4::perspective(60.0f, (float)W / H, 0.1f, 100.0f);
 
-	//顶点着色器
-	BlinnPhongShader shaderLeft;
-	PhongShader shaderRight;
 
-	shaderLeft.viewProj = projection * view;
-	shaderLeft.lightDir = Vec3(0.5f, 1.0f, 1.0f).normalized();
-	shaderLeft.cameraPos = Vec3(0, 0, 0);
-	shaderLeft.baseColor = Vec3(255, 0, 0);     // 红球
+	//加载模型
+	Mesh mesh;
+	if (!loadOBJ(mesh, "scenes/diablo3_pose.obj")) {
+		printf("Failed to load OBJ\n");
+		return 1;
+	}
 
-	shaderRight.viewProj = projection * view;
-	shaderRight.lightDir = Vec3(0.5f, 1.0f, 1.0f).normalized();
-	shaderRight.cameraPos = Vec3(0, 0, 0);
-	shaderRight.baseColor = Vec3(0, 0, 255);     // 蓝球
+	//加载纹理
+	texture tex("scenes/diablo3_pose_diffuse.png");
 
-
-
+	shader.texture = &tex;
 
 	//主循环
 	bool done = false;
@@ -167,12 +134,10 @@ int main(int argc, char* argv[])
 		}
 
 		//每帧更新
-		view = camera.GetViewMatrix();
-		shaderLeft.cameraPos = camera.GetPosition();
-		shaderLeft.viewProj = projection * view;
-		shaderRight.cameraPos = camera.GetPosition();
-		shaderRight.viewProj = projection * view;
-
+		Matrix4 view = camera.GetViewMatrix();
+		shader.viewProj = projection * view;
+		shader.cameraPos = camera.GetPosition();
+		
 		framebuffer.clear(0xFF000000);   // 颜色清黑
 		//framebuffer.clear(0xFFFFFFFF);   // 清成白色
 		zbuffer.clear(0.0f);             // 深度清"最远"
@@ -180,7 +145,7 @@ int main(int argc, char* argv[])
 		angle += 0.01f; //每帧旋转角度增量
 
 		/*
-		局部坐标 (cubeVerts)
+		局部坐标
 		↓ 模型矩阵 (旋转)
 		世界坐标		← 光照
 		↓ 视图矩阵 (平移 -5)
@@ -195,43 +160,56 @@ int main(int argc, char* argv[])
 		帧缓冲像素
 		*/
 
-		// 模型矩阵：绕 Y 和 X 转
-		//Matrix4 model = Matrix4::RotationY(angle) * Matrix4::RotationX(angle * 0.5f);
 
-
-		//平移 旋转
-		Matrix4 mleft = Matrix4::Translation(-1.5f, 0, 0) * Matrix4::RotationY(angle);
-		Matrix4 mright = Matrix4::Translation(1.5f, 0, 0) * Matrix4::RotationY(angle);
-
-
-
-		//lambda:渲染整个球体
-		auto DrawSphere = [&](Matrix4 model, Shader& shader)
+		// 模型矩阵：绕 Y 轴旋转
+		Matrix4 model = Matrix4::RotationY(angle);
+		
+		//遍历所有面
+		for (auto& f : mesh.Faces)
+		{
+			Vec3 worldPos[3], worldNormal[3], worldUV[3], clip[3];
+			for (int i = 0; i < 3; ++i)
 			{
-				for (auto& f : sphereFaces)
+				//顶点：
+				worldPos[i] = model * mesh.vertices[f.v[i]];
+
+				//法线
+				if (f.vn[i] >= 0)
 				{
-					Vec3 worldPos[3], normal[3], clip[3];
-					for (int i = 0; i < 3; ++i)
-					{
-						worldPos[i] = model * sphereVerts[f.v[i]];
-						normal[i] = model.TransFormDir(sphereNormals[f.v[i]]);//忽略平移分量，法线不受平移影响
-					}
-					for (int i = 0; i < 3; ++i) 
-						clip[i] = shader.Vertex(worldPos[i], normal[i], i);
-					for (int i = 0; i < 3; ++i)
-					{
-						clip[i].PerspectiveDivision();
-						clip[i].x = (clip[i].x + 1) * 0.5f * W;
-						clip[i].y = (1 - clip[i].y) * 0.5f * H;
-						clip[i].z = (clip[i].z + 1) * 0.5f;
-					}
-					Rasterizer::DrawTriangle(framebuffer, zbuffer, fmt, clip, shader);
+					worldNormal[i] = model.TransFormDir(mesh.Normals[f.vn[i]]);
 				}
-			};
+				else
+				{
+					//没有法线时用默认（面法线）代替
+					Vec3 e1 = mesh.vertices[f.v[1]] - mesh.vertices[f.v[0]];
+					Vec3 e2 = mesh.vertices[f.v[2]] - mesh.vertices[f.v[0]];
+					worldNormal[i] = model.TransFormDir(e1.cross(e2).normalized());
+				}	
 
-		DrawSphere(mleft, shaderLeft);
-		DrawSphere(mright, shaderRight);
+				//纹理
+				if (f.vt[i] >= 0)
+					worldUV[i] = mesh.Textures[f.vt[i]];
+				else
+					worldUV[i] = Vec3(0,0,0);
+			}
 
+			//顶点着色器;
+			for (int i = 0; i < 3; ++i)
+				clip[i] = shader.Vertex(worldPos[i],worldNormal[i],worldUV[i],i);
+
+			//透视除法 + 视口变换
+			//NDC-> [-1, 1]
+			//屏幕幕坐标范围是 [0, 1]（或 [0, W]、[0, H]）
+			//+1 把 [-1, 1] 平移到 [0, 2]，*0.5 再缩放到 [0, 1]。两步合起来就是从 NDC 映射到 [0, 1]
+			for (int i = 0; i < 3; i++)
+			{
+				clip[i].PerspectiveDivision();
+				clip[i].x = (clip[i].x + 1) * 0.5f * W;
+				clip[i].y = (1 - clip[i].y) * 0.5f * H;//y是反的
+				clip[i].z = (clip[i].z + 1) * 0.5f;
+			}
+			Rasterizer::DrawTriangle(framebuffer, zbuffer, fmt, clip, shader);
+		}
 
 		//锁定纹理，获取像素指针和pitch(行字节数)
 		Uint32* pixels; int pitch;
